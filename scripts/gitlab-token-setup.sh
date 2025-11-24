@@ -6,10 +6,14 @@
 # Usage: ./gitlab-token-setup.sh
 # Requirements: gpg (GnuPG), git
 # Author: Gravity Wiz
-# Version: 1.0.0
+# Version: 1.1.0
 ################################################################################
 
 set -euo pipefail
+
+# Configure GPG for non-interactive use
+export GPG_TTY=$(tty)
+export GNUPGHOME="${GNUPGHOME:-$HOME/.gnupg}"
 
 # Configuration
 TOKEN_DIR="${HOME}/.config/gitlab-tokens"
@@ -90,15 +94,38 @@ get_gpg_key() {
 # Store the token
 store_token() {
     local token
+    local passphrase
+    local passphrase_confirm
 
-    print_info "Please enter your GitLab Personal Access Token"
-    print_info "The token should have 'write_repository' scope"
-    echo -n "Token: "
+    print_info "Please enter your GitLab Personal Access Token" >&2
+    print_info "The token should have 'write_repository' scope" >&2
+    echo -n "Token: " >&2
     read -s token
-    echo
+    echo >&2
 
     if [ -z "$token" ]; then
         print_error "Token cannot be empty"
+        exit 1
+    fi
+
+    echo >&2
+    print_info "Now create an encryption passphrase to protect your token" >&2
+    print_info "You'll need this passphrase when using gitlab-push.sh" >&2
+    echo -n "Encryption passphrase: " >&2
+    read -s passphrase
+    echo >&2
+
+    echo -n "Confirm passphrase: " >&2
+    read -s passphrase_confirm
+    echo >&2
+
+    if [ "$passphrase" != "$passphrase_confirm" ]; then
+        print_error "Passphrases do not match"
+        exit 1
+    fi
+
+    if [ -z "$passphrase" ]; then
+        print_error "Passphrase cannot be empty"
         exit 1
     fi
 
@@ -106,12 +133,14 @@ store_token() {
     mkdir -p "$TOKEN_DIR"
     chmod 700 "$TOKEN_DIR"
 
-    # Encrypt and store the token
-    echo -n "$token" | gpg --symmetric --cipher-algo AES256 --armor --output "$TOKEN_FILE"
+    # Encrypt and store the token using batch mode
+    echo -n "$token" | gpg --batch --yes --symmetric --cipher-algo AES256 --armor --passphrase "$passphrase" --output "$TOKEN_FILE"
 
     if [ $? -eq 0 ]; then
         chmod 600 "$TOKEN_FILE"
-        print_success "Token encrypted and stored at: $TOKEN_FILE"
+        print_success "Token encrypted and stored at: $TOKEN_FILE" >&2
+        # Output passphrase to stdout for capture
+        echo "$passphrase"
     else
         print_error "Failed to encrypt token"
         exit 1
@@ -120,9 +149,11 @@ store_token() {
 
 # Test token decryption
 test_decryption() {
+    local passphrase="$1"
+
     print_info "Testing token decryption..."
 
-    if gpg --decrypt --quiet "$TOKEN_FILE" &> /dev/null; then
+    if gpg --batch --yes --decrypt --quiet --passphrase "$passphrase" "$TOKEN_FILE" &> /dev/null; then
         print_success "Token can be decrypted successfully"
     else
         print_error "Failed to decrypt token"
@@ -151,8 +182,9 @@ main() {
         fi
     fi
 
-    store_token
-    test_decryption
+    local passphrase
+    passphrase=$(store_token)
+    test_decryption "$passphrase"
 
     echo
     print_success "Setup complete!"

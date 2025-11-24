@@ -9,10 +9,14 @@
 #        ./gitlab-push.sh origin feature --force  # Force push
 # Requirements: gpg (GnuPG), git, gitlab-token-setup.sh (run first)
 # Author: Gravity Wiz
-# Version: 1.0.0
+# Version: 1.1.0
 ################################################################################
 
 set -euo pipefail
+
+# Configure GPG for non-interactive use
+export GPG_TTY=$(tty)
+export GNUPGHOME="${GNUPGHOME:-$HOME/.gnupg}"
 
 # Configuration
 TOKEN_DIR="${HOME}/.config/gitlab-tokens"
@@ -64,10 +68,18 @@ check_token_exists() {
 # Decrypt token
 get_token() {
     local token
-    token=$(gpg --decrypt --quiet "$TOKEN_FILE" 2>/dev/null)
+    local passphrase
+
+    # Prompt for passphrase
+    echo -n "Enter encryption passphrase: " >&2
+    read -s passphrase
+    echo >&2
+
+    # Decrypt using batch mode
+    token=$(gpg --batch --yes --decrypt --quiet --passphrase "$passphrase" "$TOKEN_FILE" 2>/dev/null)
 
     if [ -z "$token" ]; then
-        print_error "Failed to decrypt token"
+        print_error "Failed to decrypt token. Check your passphrase."
         exit 1
     fi
 
